@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alternative Data Pipelines</title>
+  <link rel="stylesheet" href="../vendor/reveal/reset.css">
+  <link rel="stylesheet" href="../vendor/reveal/reveal.css">
+  <style>
+    /* Theme: same visual language as the demo pages. (reveal.css ships no
+     theme - these rules ARE the theme.) */
+    :root {
+      --accent: #2a7;
+      --dim: #999;
+      --warn: #fa5;
+    }
+
+    body,
+    .reveal-viewport {
+      background: #111;
+    }
+
+    .reveal {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 46px;
+      color: #eee;
+    }
+
+    .reveal h1,
+    .reveal h2,
+    .reveal h3 {
+      color: #fff;
+      font-weight: 650;
+      line-height: 1.15;
+    }
+
+    .reveal a {
+      color: var(--accent);
+    }
+
+    .reveal ::selection {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .reveal h1 {
+      font-size: 2.2em;
+    }
+
+    .reveal h2 {
+      font-size: 1.5em;
+      margin-bottom: .6em;
+    }
+
+    .reveal ul {
+      display: block;
+      margin-left: 1em;
+    }
+
+    .reveal li {
+      margin: .35em 0;
+    }
+
+    .reveal table {
+      margin: 0 auto;
+      border-collapse: collapse;
+      font-size: .85em;
+    }
+
+    .reveal th,
+    .reveal td {
+      padding: .25em .8em;
+      border-bottom: 1px solid #333;
+    }
+
+    .reveal th {
+      color: var(--dim);
+      font-weight: 600;
+    }
+
+    .reveal code {
+      font-family: ui-monospace, Menlo, monospace;
+      background: #1a1a1a;
+      padding: .1em .3em;
+      border-radius: 6px;
+    }
+
+    .reveal .wire {
+      font-size: .55em;
+      background: #1a1a1a;
+      padding: .8em 1em;
+      border-radius: 10px;
+      display: inline-block;
+    }
+
+    .dim {
+      color: var(--dim);
+    }
+
+    .warn {
+      color: var(--warn);
+    }
+
+    .accent {
+      color: var(--accent);
+    }
+
+    .todo {
+      color: var(--warn);
+      font-size: .6em;
+    }
+
+    canvas.deckchart {
+      width: 62%;
+      max-width: 1000px;
+      background: #181818;
+      border-radius: 12px;
+    }
+
+    svg.dgm {
+      width: 74%;
+      max-width: 1080px;
+      display: block;
+      margin: .4em auto;
+    }
+
+    svg.dgm text {
+      font-family: system-ui, sans-serif;
+    }
+
+    /* peeling-decoder walkthrough */
+    #peelChunks {
+      display: flex;
+      gap: .4em;
+      justify-content: center;
+      margin-bottom: .7em;
+    }
+
+    .pchunk {
+      width: 1.7em;
+      height: 1.7em;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      font-size: .95em;
+      background: #262626;
+      color: #7a7a7a;
+      border: 2px solid #3a3a3a;
+      transition: all .2s;
+    }
+
+    .pchunk.solved {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    #peelFrames {
+      display: flex;
+      flex-direction: column;
+      gap: .3em;
+      align-items: center;
+    }
+
+    .frow {
+      display: flex;
+      align-items: center;
+      gap: .4em;
+      font-size: .66em;
+      padding: .2em .6em;
+      border-radius: 10px;
+      border: 2px solid transparent;
+      transition: all .2s;
+    }
+
+    .frow.ready {
+      border-color: #78f;
+    }
+
+    .frow.active {
+      background: rgba(42, 170, 119, .32);
+      border-color: var(--accent);
+      font-weight: 650;
+    }
+
+    .frow.redundant {
+      opacity: .4;
+    }
+
+    .flabel {
+      color: #888;
+      width: 1.8em;
+      text-align: right;
+    }
+
+    .chip {
+      padding: .05em .5em;
+      border-radius: 7px;
+      background: #262626;
+      color: #ccc;
+      border: 1px solid #3a3a3a;
+    }
+
+    .chip.solved {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      text-decoration: line-through;
+    }
+
+    .xor {
+      color: #666;
+    }
+
+    .deg {
+      color: #888;
+      margin-left: .3em;
+      min-width: 3.2em;
+    }
+
+    .cols {
+      display: flex;
+      gap: 1.2em;
+      justify-content: center;
+      text-align: left;
+    }
+
+    .cols>div {
+      flex: 1;
+    }
+
+    /* Demo slides */
+    .qr-frame {
+      background: #fff;
+      padding: 32px;
+      display: inline-block;
+      line-height: 0;
+      border-radius: 4px;
+    }
+
+    .qr-frame canvas {
+      width: 680px;
+      height: 680px;
+      image-rendering: pixelated;
+    }
+
+    /* Controls row below the QR has fixed geometry so clicking Start/Pause and
+     the changing status text never shift the code on screen. */
+    .qr-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1em;
+      min-height: 2.2em;
+      margin-top: .4em;
+    }
+
+    .qr-controls .demo-btn {
+      width: 6em;
+      box-sizing: border-box;
+    }
+
+    .qr-controls .status {
+      font-size: .5em;
+      width: 30em;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      color: var(--dim);
+    }
+
+    .booth video,
+    .booth img {
+      height: 660px;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #000;
+    }
+
+    .demo-btn.ghost {
+      background: #333;
+      color: #ccc;
+    }
+
+    .demo-btn:disabled {
+      opacity: .35;
+      cursor: default;
+    }
+
+    .booth-controls .demo-btn {
+      width: 6em;
+      box-sizing: border-box;
+      margin: 0 .3em;
+    }
+
+    /* wire slide: fragment-synced field highlighting */
+    .reveal .wire-legend {
+      list-style: none;
+      margin: .4em auto 0;
+      font-size: .6em;
+      max-width: 30em;
+      text-align: left;
+    }
+
+    .wire-legend li {
+      margin: .26em 0;
+      color: #aaa;
+    }
+
+    .wire-legend li.current-fragment {
+      color: #fff;
+    }
+
+    .wire .sep {
+      color: #555;
+      margin: 0 .05em;
+    }
+
+    .wire .f {
+      border-radius: 6px;
+      padding: 0 .12em;
+      transition: all .15s;
+    }
+
+    .wire.stepping .f {
+      opacity: .4;
+    }
+
+    .wire .f.hl {
+      opacity: 1;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .wire .f2 {
+      color: #78f;
+    }
+
+    .reveal p.wire.v2 {
+      margin-top: .5em;
+    }
+
+    .reveal h2.glyphs .h-icon {
+      width: 1.25em;
+      height: 1.25em;
+      margin: 0 .25em;
+      vertical-align: middle;
+      color: var(--accent);
+    }
+
+    .reveal h2.glyphs .arrow {
+      width: 1em;
+      height: 1em;
+      color: var(--dim);
+    }
+
+
+    .demo-btn {
+      font-size: .8em;
+      padding: .4em 1.2em;
+      border: none;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+    }
+
+    /* QR anatomy slide: base code + stacked overlay canvases, one per fragment. */
+    .qr-anatomy {
+      display: flex;
+      gap: 1.2em;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .anatomy-frame {
+      background: #fff;
+      padding: 24px;
+      border-radius: 4px;
+      line-height: 0;
+    }
+
+    .anatomy-stack {
+      position: relative;
+      display: inline-block;
+    }
+
+    .anatomy-stack canvas {
+      width: 560px;
+      height: 560px;
+      image-rendering: pixelated;
+      display: block;
+    }
+
+    .anatomy-stack .overlay {
+      position: absolute;
+      inset: 0;
+    }
+
+    .reveal .anatomy-legend {
+      list-style: none;
+      margin-left: 0;
+      font-size: .62em;
+      max-width: 15em;
+      text-align: left;
+    }
+
+    .anatomy-legend li {
+      margin: .5em 0;
+    }
+
+    .sw {
+      display: inline-block;
+      width: .8em;
+      height: .8em;
+      border-radius: 3px;
+      margin-right: .35em;
+    }
+
+    .repoqr {
+      width: 230px;
+      height: 230px;
+      background: #fff;
+      padding: 14px;
+      border-radius: 4px;
+      image-rendering: pixelated;
+    }
+
+    .joinqr {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      text-align: center;
+    }
+
+    .joinqr canvas {
+      width: 200px;
+      height: 200px;
+      background: #fff;
+      padding: 14px;
+      border-radius: 4px;
+    }
+
+    .joinqr div {
+      font-size: .4em;
+      color: var(--dim);
+      margin-top: .4em;
+    }
+
+    /* Deck progress as a chunk grid, bottom-left. */
+    #chunkProgress {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 30;
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      max-width: 40vw;
+    }
+
+    #chunkProgress span {
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+      background: #333;
+    }
+
+    #chunkProgress span.got {
+      background: var(--accent);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- ============ ACT 0 - COLD OPEN (3 min) ============ -->
+
+      <section id="photo" data-transition="none">
+        <h2 class="glyphs" aria-label="Say cheese, then the photo"><svg class="h-icon" viewBox="0 0 24 24"
+            aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
+            stroke-linecap="round">
+            <path d="M3 19h18V8z" />
+            <circle cx="16" cy="15" r="1.4" />
+            <circle cx="12" cy="17" r="1" />
+            <circle cx="18" cy="12" r=".9" />
+          </svg><svg class="h-icon arrow" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
+            <path d="M4 12h15M13 6l6 6-6 6" />
+          </svg><svg class="h-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">
+            <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+            <circle cx="12" cy="13" r="3.5" />
+          </svg></h2>
+        <div class="booth">
+          <video id="boothVideo" playsinline muted></video>
+          <img id="boothPhoto" hidden alt="the audience">
+        </div>
+        <p class="booth-controls">
+          <button class="demo-btn" id="boothCapture">Capture</button>
+          <button class="demo-btn ghost" id="boothRetake" disabled>Retake</button>
+        </p>
+        <p class="dim" id="boothStatus" style="font-size:.6em"></p>
+        <aside class="notes">
+          Cold open - no title, no context. Camera starts when this slide opens.
+          Take the photo, let them laugh, move on. This photo is the payload for the
+          whole talk. If the camera fails: demos fall back to a random sample, keep going.
+        </aside>
+      </section>
+
+      <section>
+        <h2>I'm going to send this photo<br>to my phone.</h2>
+        <ul>
+          <li class="fragment">Big deal, I know. BUT...</li>
+          <li class="fragment">no wifi</li>
+          <li class="fragment">no bluetooth</li>
+          <li class="fragment">no hot-spot</li>
+          <li class="fragment">no cable</li>
+        </ul>
+        <aside class="notes">
+          Phone mirrored via USB (QuickTime - AirPlay dies with the network).
+          Flip airplane mode ON on camera. Verify the WiFi icon is actually gone.
+          Try loading a website - it fails. The airplane icon stays visible for the rest of the talk.
+        </aside>
+      </section>
+
+      <section>
+        <h1>Alternative Data Pipelines</h1>
+        <p class="dim">~</p>
+        <p style="font-size:.7em">Franz Buchsbaum, kununu, DESx 2026</p>
+        <aside class="notes">30 seconds, tops. The demo already bought the credibility.</aside>
+      </section>
+
+      <!-- ============ ACT 1 - THE CHANNEL (5 min) ============ -->
+
+      <section>
+        <h2>What's actually on stage</h2>
+        <svg class="dgm" viewBox="0 0 1200 340" role="img"
+          aria-label="Laptop screen sends light across the air to a phone camera">
+          <defs>
+            <marker id="ah-green" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#2a7" />
+            </marker>
+          </defs>
+          <!-- laptop -->
+          <rect x="60" y="50" width="250" height="190" rx="12" fill="#111" stroke="#3a3a3a" stroke-width="3" />
+          <rect x="88" y="68" width="154" height="154" rx="6" fill="#fff" />
+          <g fill="#000">
+            <rect x="100" y="80" width="34" height="34" />
+            <rect x="196" y="80" width="34" height="34" />
+            <rect x="100" y="176" width="34" height="34" />
+            <rect x="146" y="84" width="9" height="9" />
+            <rect x="164" y="102" width="9" height="9" />
+            <rect x="182" y="84" width="9" height="9" />
+            <rect x="146" y="120" width="9" height="9" />
+            <rect x="164" y="138" width="9" height="9" />
+            <rect x="200" y="138" width="9" height="9" />
+            <rect x="146" y="156" width="9" height="9" />
+            <rect x="200" y="176" width="9" height="9" />
+            <rect x="182" y="120" width="9" height="9" />
+          </g>
+          <g fill="#fff">
+            <rect x="106" y="86" width="22" height="22" />
+            <rect x="202" y="86" width="22" height="22" />
+            <rect x="106" y="182" width="22" height="22" />
+          </g>
+          <g fill="#000">
+            <rect x="112" y="92" width="10" height="10" />
+            <rect x="208" y="92" width="10" height="10" />
+            <rect x="112" y="188" width="10" height="10" />
+          </g>
+          <path d="M45 240 L325 240 L347 270 L23 270 Z" fill="#1c1c1c" stroke="#3a3a3a" stroke-width="2" />
+          <text x="185" y="300" text-anchor="middle" fill="#bbb" font-size="22">laptop screen</text>
+
+          <!-- air / photons -->
+          <line x1="350" y1="112" x2="848" y2="112" stroke="#2a7" stroke-width="3" stroke-dasharray="11 9"
+            marker-end="url(#ah-green)" />
+          <line x1="350" y1="150" x2="848" y2="150" stroke="#2a7" stroke-width="3" stroke-dasharray="11 9"
+            marker-end="url(#ah-green)" />
+          <line x1="350" y1="188" x2="848" y2="188" stroke="#2a7" stroke-width="3" stroke-dasharray="11 9"
+            marker-end="url(#ah-green)" />
+          <text x="600" y="80" text-anchor="middle" fill="#2a7" font-size="23">a lossy one-way broadcast</text>
+
+          <!-- phone -->
+          <rect x="905" y="55" width="150" height="232" rx="20" fill="#1c1c1c" stroke="#3a3a3a" stroke-width="3" />
+          <rect x="918" y="78" width="124" height="186" rx="6" fill="#111" />
+          <g>
+            <rect x="936" y="96" width="14" height="14" rx="3" fill="#2a7" />
+            <rect x="954" y="96" width="14" height="14" rx="3" fill="#2a7" />
+            <rect x="972" y="96" width="14" height="14" rx="3" fill="#2a7" />
+            <rect x="990" y="96" width="14" height="14" rx="3" fill="#333" />
+            <rect x="1008" y="96" width="14" height="14" rx="3" fill="#333" />
+            <rect x="936" y="114" width="14" height="14" rx="3" fill="#2a7" />
+            <rect x="954" y="114" width="14" height="14" rx="3" fill="#333" />
+            <rect x="972" y="114" width="14" height="14" rx="3" fill="#333" />
+            <rect x="990" y="114" width="14" height="14" rx="3" fill="#333" />
+            <rect x="1008" y="114" width="14" height="14" rx="3" fill="#333" />
+          </g>
+          <rect x="936" y="150" width="88" height="16" rx="8" fill="#262626" />
+          <rect x="936" y="150" width="54" height="16" rx="8" fill="#2a7" />
+          <text x="980" y="200" text-anchor="middle" fill="#ccc" font-size="18">62%</text>
+          <text x="980" y="305" text-anchor="middle" fill="#bbb" font-size="22">phone camera</text>
+        </svg>
+        <p class="fragment">Yup. A camera pointed at a screen makes for a genuinely terrible network cable.</p>
+      </section>
+
+      <section>
+        <h2>A QR code is a bucket of bytes</h2>
+        <table>
+          <tr>
+            <th>version</th>
+            <th>modules</th>
+            <th>capacity (EC&nbsp;L)</th>
+            <th>capacity (EC&nbsp;H)</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td>21x21</td>
+            <td>17 B</td>
+            <td>7 B</td>
+          </tr>
+          <tr>
+            <td>19</td>
+            <td>93x93</td>
+            <td colspan="2">605 payload chars @ M</td>
+          </tr>
+          <tr>
+            <td>40</td>
+            <td>177x177</td>
+            <td>2 953 B</td>
+            <td>1 273 B</td>
+          </tr>
+        </table>
+        <p class="fragment">Why not max density? <span class="dim">Because camera's are sh*t -> glare,
+            autofocus...</span></p>
+      </section>
+
+      <section id="anatomy">
+        <h2>Inside a QR code</h2>
+        <div class="qr-anatomy">
+          <div class="anatomy-frame">
+            <div class="anatomy-stack">
+              <canvas id="anatomyQr"></canvas>
+              <canvas class="overlay fragment" data-fragment-index="1" id="ovFinder"></canvas>
+              <canvas class="overlay fragment" data-fragment-index="2" id="ovTiming"></canvas>
+              <canvas class="overlay fragment" data-fragment-index="3" id="ovAlign"></canvas>
+              <canvas class="overlay fragment" data-fragment-index="4" id="ovFormat"></canvas>
+            </div>
+          </div>
+          <ul class="anatomy-legend">
+            <li class="dim">↖ scan it - if you dare</li>
+            <li class="fragment" data-fragment-index="1"><span class="sw" style="background:#2a7"></span><b>finder
+                pattern</b> -> three corners: resitent to rotation/titl</li>
+            <li class="fragment" data-fragment-index="2"><span class="sw" style="background:#fa5"></span><b>timing</b>
+              ->
+              a module ruler: where the grid rows and columns sit</li>
+            <li class="fragment" data-fragment-index="3"><span class="sw"
+                style="background:#78f"></span><b>alignment</b> -> defense against perspective warp; bigger codes get
+              more</li>
+            <li class="fragment" data-fragment-index="4"><span class="sw" style="background:#e6a"></span><b>format
+                info</b> -> EC level + mask, stored twice</li>
+            <li class="fragment" data-fragment-index="5">everything else -> <b>our actual content + Reed-Solomon
+                parity</b>,
+              snake-pattern up and down, XOR-masked</li>
+          </ul>
+        </div>
+        <aside class="notes">
+          The sample QR points at slides/deep-dive.html ON THIS HOST (rendered from the
+          deck's own URL) - scanner previews show your domain, not YouTube. The decoy
+          page embeds the video; the reveal is on tap. Requires the deck to be
+          publicly hosted (GitHub Pages) for phones on cellular - publish before the
+          conference. After the laugh: "you scanned an unverified code from a
+          stranger - that's the trust lesson, free of charge." Then step the
+          fragments: structure first, then the punchline that most of the symbol is
+          data + parity. Segue: "so what do those parity bytes buy us?"
+        </aside>
+      </section>
+
+      <section id="reed-solomon">
+        <h2>Read-what now...?</h2>
+        <h3>Reed-Solomon in 60 seconds</h3>
+        <svg viewBox="0 0 900 400" style="width: 800px; display: block; margin: 0 auto;">
+          <line class="fragment" data-fragment-index="1" x1="80" y1="320" x2="820" y2="120" stroke="#eee"
+            stroke-width="4" />
+          <g class="fragment" data-fragment-index="2" fill="#78f">
+            <circle cx="120" cy="309" r="11" />
+            <circle cx="450" cy="220" r="11" />
+            <circle cx="780" cy="131" r="11" />
+          </g>
+          <g class="fragment" data-fragment-index="3" stroke="#f66" stroke-width="7" stroke-linecap="round">
+            <line x1="100" y1="289" x2="140" y2="329" />
+            <line x1="100" y1="329" x2="140" y2="289" />
+            <line x1="430" y1="200" x2="470" y2="240" />
+            <line x1="430" y1="240" x2="470" y2="200" />
+            <line x1="600" y1="154" x2="640" y2="194" />
+            <line x1="600" y1="194" x2="640" y2="154" />
+          </g>
+          <circle cx="280" cy="266" r="11" fill="#2a7" />
+          <circle cx="620" cy="174" r="11" fill="#2a7" />
+        </svg>
+        <ul style="font-size: .7em">
+          <li>our data: <span class="accent">two numbers</span> -> drawn as two points</li>
+          <li class="fragment" data-fragment-index="1">yup -> that's a line</li>
+          <li class="fragment" data-fragment-index="2">transmit any <b>five</b> points from that line -> the three
+            extras
+            are
+            <span style="color:#78f">parity</span>
+          </li>
+          <li class="fragment" data-fragment-index="3">lose <b>any three</b> -> still the same line</li>
+          <li class="fragment accent" data-fragment-index="4">Reed-Solomon is this trick over bytes</li>
+        </ul>
+        <aside class="notes">
+          The only math slide - keep it at picture level: k points of data, n on the
+          wire, ANY k rebuild everything. If someone asks afterwards: the real thing
+          runs over GF(256) so bytes stay bytes - same picture. Act 3 calls back to
+          this: L/M/Q/H is just "how many extra points", erasures-vs-errors is the
+          fine print.
+        </aside>
+      </section>
+
+      <section id="wire">
+        <h2>Show the wire</h2>
+        <p class="wire">
+          <code><span class="f" data-f="1">v1</span><span class="sep">|</span><span class="f" data-f="2">8a3fc2d1</span><span class="sep">|</span><span class="f" data-f="3">17</span><span class="sep">|</span><span class="f" data-f="4">128</span><span class="sep">|</span><span class="f" data-f="5">audience.jpg</span><span class="sep">|</span><span class="f" data-f="6">image/jpeg</span><span class="sep">|</span><span class="f" data-f="7">9c2e41d7</span><span class="sep">|</span><span class="f" data-f="8">iVBORw0KGgoAAAANS…</span></code>
+        </p>
+        <ol class="wire-legend">
+          <li class="fragment" data-fragment-index="1"><code>v1</code> - version tag - which frame format is this?</li>
+          <li class="fragment" data-fragment-index="2"><code>8a3fc2d1</code> - file id - identifies a unique transfer
+          </li>
+          <li class="fragment" data-fragment-index="3"><code>17</code> - sequence - which piece...</li>
+          <li class="fragment" data-fragment-index="4"><code>128</code> - total - ...of how many. Together: enough to
+            know
+            when you're done.</li>
+          <li class="fragment" data-fragment-index="5"><code>audience.jpg</code> - name - of the file</li>
+          <li class="fragment" data-fragment-index="6"><code>image/jpeg</code> - type - a mime.</li>
+          <li class="fragment" data-fragment-index="7"><code>9c2e41d7</code> - CRC-32 of the piece - another layer of
+            security</li>
+          <li class="fragment" data-fragment-index="8"><code>iVBORw0KGgoAAAANS...</code> - a chunk of content - 400
+            bytes
+            ->
+            536 chars including the base64 tax</li>
+        </ol>
+        <p class="fragment accent" data-fragment-index="9">Every frame is self-sufficient.</p>
+        <!--
+        <p class="fragment wire v2" data-fragment-index="11">
+          <code>v2<span class="sep">|</span>8a3fc2d1<span class="sep">|</span><span class="f2">62</span><span class="sep">|</span><span class="f2">24404</span><span class="sep">|</span><span class="f2">3735928559</span><span class="sep">|</span>audience.jpg<span class="sep">|</span>image/jpeg<span class="sep">|</span>c0201a76<span class="sep">|</span>…</code><br>
+          <span class="dim" style="font-size:.75em">the fountain version: seq/total become <span style="color:#78f">K ·
+              file size · a 32-bit seed</span> - the seed alone replays which chunks were XORed. More on that in Act
+            4.</span>
+        </p>
+      -->
+        <aside class="notes">
+          Step → through the fields: each press highlights one part of the frame and
+          its one-liner. Beats 9-10 are the punchlines; beat 11 previews the fountain
+          frame (K=62 / 24,404 B is the real photo you measured) - plant "only a seed
+          travels" now, cash it in during the peeling slide.
+        </aside>
+
+      </section>
+
+      <!-- ============ ACT 2 - NAIVE PROTOCOL & THE STALL (7 min) ============ -->
+
+      <section>
+        <h2>Protocol #1: chunk, loop, hop, hope</h2>
+        <svg class="dgm" viewBox="0 0 1120 315" role="img"
+          aria-label="A file split into chunks, played 1 to N on an endless loop">
+          <defs>
+            <marker id="ah-grey" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#999" />
+            </marker>
+            <marker id="ah-orange" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#fa5" />
+            </marker>
+          </defs>
+          <!-- file -->
+          <path d="M70 70 L150 70 L190 110 L190 240 L70 240 Z" fill="#1c1c1c" stroke="#3a3a3a" stroke-width="2" />
+          <path d="M150 70 L150 110 L190 110" fill="none" stroke="#3a3a3a" stroke-width="2" />
+          <g fill="#3a3a3a">
+            <rect x="88" y="140" width="84" height="8" rx="4" />
+            <rect x="88" y="162" width="84" height="8" rx="4" />
+            <rect x="88" y="184" width="60" height="8" rx="4" />
+          </g>
+          <text x="130" y="270" text-anchor="middle" fill="#bbb" font-size="21">photo.jpg</text>
+
+          <!-- split arrow -->
+          <line x1="200" y1="150" x2="298" y2="150" stroke="#999" stroke-width="3" marker-end="url(#ah-grey)" />
+          <text x="249" y="138" text-anchor="middle" fill="#888" font-size="18">split</text>
+
+          <!-- chunks -->
+          <g font-size="21" text-anchor="middle">
+            <rect x="315" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#2a7" stroke-width="3" /><text
+              x="345" y="156" fill="#fff">c1</text>
+            <rect x="387" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#3a3a3a" stroke-width="2" /><text
+              x="417" y="156" fill="#ccc">c2</text>
+            <rect x="459" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#3a3a3a" stroke-width="2" /><text
+              x="489" y="156" fill="#ccc">c3</text>
+            <rect x="531" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#3a3a3a" stroke-width="2" /><text
+              x="561" y="156" fill="#ccc">c4</text>
+            <rect x="603" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#3a3a3a" stroke-width="2" /><text
+              x="633" y="156" fill="#ccc">c5</text>
+            <text x="690" y="157" fill="#888">…</text>
+            <rect x="712" y="126" width="60" height="48" rx="9" fill="#262626" stroke="#3a3a3a" stroke-width="2" /><text
+              x="742" y="156" fill="#ccc">cN</text>
+          </g>
+          <text x="345" y="112" text-anchor="middle" fill="#2a7" font-size="16">on screen now</text>
+
+          <!-- loop arrow -->
+          <path d="M775 176 Q 545 300 320 180" fill="none" stroke="#fa5" stroke-width="3"
+            marker-end="url(#ah-orange)" />
+          <text x="548" y="292" text-anchor="middle" fill="#fa5" font-size="20">play 1 ... N, then da capo</text>
+        </svg>
+        <ul>
+          <li>split file into N chunks</li>
+          <li>show chunk 1, 2, ... N, repeat</li>
+          <li>receiver collects until it has all N</li>
+        </ul>
+        <p class="fragment">Sounds good enouhg. Ship it.</p>
+      </section>
+
+      <section id="demo-naive" data-transition="none">
+        <div class="qr-frame"><canvas id="naiveCanvas"></canvas></div>
+        <div class="qr-controls">
+          <button class="demo-btn" id="naiveToggle">Start</button>
+          <span class="status" id="naiveStatus"></span>
+        </div>
+        <div class="joinqr">
+          <canvas class="joinQr"></canvas>
+          <div>want try yourself?<span class="joinUrl"></span></div>
+        </div>
+        <aside class="notes">
+          Receiver for the phone: https://sneils.github.io/alternative-data-pipelines/tools/receiver.html
+          (this deck's join-QR currently encodes: <span class="joinNote"></span> - if that
+          says localhost, the deck isn't being served from Pages.)
+          DEMO: the naive loop, live. Phone scans this. The grid fills… and stalls at
+          ~97% while the dup counter climbs. Let the room feel the frustration -
+          don't rescue it too fast. Backup: rehearsal recording.
+        </aside>
+      </section>
+
+      <section>
+        <h2>The coupon collector's problem</h2>
+        <ul>
+          <li>Expected cycles grow linearly.</li>
+          <li>Per-frame loss makes the tail end explode.</li>
+          <li class="fragment">We waste most of our time <em>waiting for reruns</em></li>
+        </ul>
+        <canvas id="couponChart" class="deckchart" width="1000" height="440"></canvas>
+        <aside class="notes">
+          Naive time-to-complete vs frame loss, from tools/measure.html over the real
+          codec (K=128 @ 10 fps). ~13s clean → ~99s at 50% loss. Don't show the
+          fountain curve yet - that's the reveal two slides on.
+        </aside>
+      </section>
+
+      <section>
+        <h2>TCP spoiled us</h2>
+        <ul>
+          <li>But re-transmits need a return path.</li>
+          <li class="fragment">One-way channels are everywhere: satellite broadcast, sensors, ...</li>
+          <li class="fragment warn">... and users close the tab (some of us anyways)</li>
+        </ul>
+      </section>
+
+      <!-- ============ ACT 3 - ERROR CORRECTION DETOUR (6 min) ============ -->
+
+      <section>
+        <h2>Every QR code is fighting for its life</h2>
+        <table>
+          <tr>
+            <th>level</th>
+            <th>data</th>
+            <th>parity</th>
+            <th>damage tolerated</th>
+          </tr>
+          <tr>
+            <td>L</td>
+            <td>19</td>
+            <td>7</td>
+            <td>~7%</td>
+          </tr>
+          <tr>
+            <td>M</td>
+            <td>16</td>
+            <td>10</td>
+            <td>~15%</td>
+          </tr>
+          <tr>
+            <td>Q</td>
+            <td>13</td>
+            <td>13</td>
+            <td>~25%</td>
+          </tr>
+          <tr>
+            <td>H</td>
+            <td>9</td>
+            <td>17</td>
+            <td>~30%</td>
+          </tr>
+        </table>
+        <p class="dim" style="font-size:.7em">codewords per symbol -> same physical size, different
+          data/parity
+          split</p>
+        <p class="fragment">You've probably heard of RAID before (not shadow legends)</p>
+        <aside class="notes">
+          DEMO: sticker over a corner of a printed level-H code - still scans.
+          Print the sticker code at H (30%); the live transfer runs at M.
+        </aside>
+      </section>
+
+      <section>
+        <h2>Erasures vs errors</h2>
+        <ul>
+          <li><em>erasures</em>: known-missing - r parity fixes r losses </li>
+          <li><em>errors</em>: unknown-position - locating costs as much as fixing → r parity fixes r/2</li>
+          <li class="fragment">decode is all-or-nothing -> a frame arrives perfect or not at all</li>
+        </ul>
+      </section>
+
+      <!-- ============ ACT 4 - FOUNTAIN CODES (10 min) ============ -->
+
+      <section>
+        <h2>Stop sending chunks.<br>Send chunks of chunks.</h2>
+        <ul>
+          <li>each frame = XOR of a <em>random subset</em> of chunks</li>
+          <li>catch any frames, in any order -> decode</li>
+          <li class="fragment accent">no feedback channel required</li>
+        </ul>
+      </section>
+
+      <section id="peel" data-transition="none">
+        <h2>A hand-made decoder</h2>
+        <div id="peelChunks"></div>
+        <div id="peelFrames"></div>
+        <p id="peelCaption" class="dim" style="font-size:.62em; min-height:2.4em; max-width:20em; margin:.6em auto 0">
+        </p>
+        <span class="fragment peel-step"></span><span class="fragment peel-step"></span>
+        <span class="fragment peel-step"></span><span class="fragment peel-step"></span>
+        <span class="fragment peel-step"></span><span class="fragment peel-step"></span>
+        <aside class="notes">
+          Real peeling, curated input: 5 chunks, 6 frames. Press → to advance each
+          beat. Start: one degree-1 frame (f0) is dashed - that's the seed. Each press
+          fires the highlighted frame (its last unknown turns green) and peels it out
+          everywhere, which lights up the next ready frame - the cascade. Last beat:
+          f5 was redundant → that's the overhead ε you just saw in the chart.
+        </aside>
+      </section>
+
+      <section>
+        <h2>Why mostly 1s and 2s</h2>
+        <canvas id="solitonChart" class="deckchart" width="1000" height="380"></canvas>
+        <ul style="font-size:.66em; max-width:20em; margin:.4em auto 0">
+          <li><span style="color:#78f">degree 1</span> -> a few singles to seed</li>
+          <li><span class="accent">degree 2</span> -> the bulk: cheapest frames that still bring value</li>
+          <li class="fragment"><span style="color:#fa5">the spike</span> -> some big ones that mop up the
+            stragglers</li>
+        </ul>
+        <aside class="notes">
+          Real robust-soliton PMF from lib/protocol.js (K=64). Too many degree-1s → wasteful
+          duplicates; too few → the decoder starves with nothing to peel. The far
+          orange spike is the robust term: without it, the last chunk or two almost
+          never gets covered - that spike is exactly what stops the naive-style stall.
+        </aside>
+      </section>
+
+      <section id="demo-fountain" data-transition="none">
+        <div class="qr-frame"><canvas id="fountainCanvas"></canvas></div>
+        <div class="qr-controls">
+          <button class="demo-btn" id="fountainToggle">Start</button>
+          <span class="status" id="fountainStatus"></span>
+        </div>
+        <div class="joinqr">
+          <canvas class="joinQr"></canvas>
+          <div>want in? point your phone<br><span class="joinUrl"></span></div>
+        </div>
+        <aside class="notes">
+          THE payoff. Same photo, fountain-coded. Wave a hand through the beam -
+          progress dips but keeps climbing. Photo renders on the airplane-moded phone.
+          Pause. Let it land. Invite the audience: everyone with the receiver page
+          open receives simultaneously - broadcast, no pairing.
+        </aside>
+      </section>
+
+      <section>
+        <h2>Before / after</h2>
+        <canvas id="beforeAfterChart" class="deckchart" width="1000" height="440"></canvas>
+        <p class="dim" style="font-size:.6em">fountain overhead holds at <span class="accent">~1.29 x K</span></p>
+        <aside class="notes">
+          Same axes, both curves now. The crossover is the story: at zero loss naive
+          is cheaper (no redundancy tax), but it's overtaken by ~5% loss - and a
+          camera-vs-screen channel is far lossier than that. Overhead ε ≈ 0.29 is
+          flat: fountain's price is constant, naive's is unbounded.
+        </aside>
+      </section>
+
+      <!-- ============ ACT 5 - YOUR DAY JOB (5 min) ============ -->
+
+      <section>
+        <h2>Where did my bandwidth go?</h2>
+        <canvas id="waterfallChart" class="deckchart" width="1000" height="460"></canvas>
+        <p class="dim" style="font-size:.6em"><span id="waterfallRun"></span></p>
+        <aside class="notes">
+          The most data-engineer slide in the deck. Each bar is derived from the one
+          before: symbol capacity → RS parity → header/base64 tax → frames the camera
+          actually caught → LT overhead. The last bar is MEASURED on camera; if the
+          derived bar beside it matches, the whole gap is accounted for. Data from
+          slides/measurements.json - the "run" block is the on-camera run.
+        </aside>
+      </section>
+
+      <section>
+        <h2>Design for missing data</h2>
+        <ul>
+          <li>you never (ok sometimes) receive "all the frames": voluntary, partial, biased samples</li>
+          <li>build for incompleteness instead of hoping for completeness</li>
+          <li>(hope is not a strategy, ~Yenia, 2026)</li>
+          <li class="fragment">redundancy and self-description beat retries</li>
+        </ul>
+        <aside class="notes">Keep company content ≤20% of the talk. Fabricated data on any example slide.</aside>
+      </section>
+
+      <!-- ============ ACT 6 - CLOSE (2 min) ============ -->
+
+
+      <section>
+        <h2>Two lessons to take home</h2>
+        <ul>
+          <li>design frames <span class="accent">to survive alone</span></li>
+          <li>when there's no return path, <span class="accent">forward error correction beats retries</span></li>
+        </ul>
+        <p class="fragment" style="margin-top:.5em">
+          <canvas id="repoQr" class="repoqr"></canvas><br>
+          <span class="dim" style="font-size:.55em">github.com/sneils/alternative-data-pipelines</span>
+        </p>
+        <aside class="notes">Background idea: the audience photo, received. Thank the room - they're in the payload.
+        </aside>
+      </section>
+
+    </div>
+  </div>
+
+  <div id="chunkProgress"></div>
+
+  <script src="../vendor/qrcode.js"></script>
+  <script src="../lib/protocol.js?v=2"></script>
+  <script src="demo.js?v=3"></script>
+  <script src="../vendor/reveal/reveal.js"></script>
+  <script src="../vendor/reveal/notes.js"></script>
+  <script>
+    Reveal.initialize({
+      width: 1920, height: 1080, margin: 0.04,
+      hash: true, transition: 'fade', backgroundTransition: 'none',
+      progress: false, controls: false, slideNumber: false,
+      plugins: [RevealNotes],
+    }).then(() => {
+      buildChunkProgress();
+      renderJoinQr();
+      renderAnatomy();
+      renderRepoQr();
+      renderCharts();
+      renderWaterfall();
+      renderSoliton();
+      renderPeel(0);
+      // slidechanged doesn't fire for the slide the deck opens on
+      if (Reveal.getCurrentSlide().id === 'photo' && !TalkDemo.state.photo) {
+        TalkDemo.startBooth(
+          document.getElementById('boothVideo'), document.getElementById('boothStatus'));
+      }
+    });
+
+    // --- demo wiring -------------------------------------------------------
+    const naiveTx = new TalkDemo.Transmitter(
+      document.getElementById('naiveCanvas'), document.getElementById('naiveStatus'));
+    const fountainTx = new TalkDemo.Transmitter(
+      document.getElementById('fountainCanvas'), document.getElementById('fountainStatus'),
+      { mode: 'fountain' });
+
+    function wireToggle(btn, tx) {
+      btn.addEventListener('click', () => { btn.textContent = tx.toggle() ? 'Pause' : 'Start'; });
+    }
+    wireToggle(document.getElementById('naiveToggle'), naiveTx);
+    wireToggle(document.getElementById('fountainToggle'), fountainTx);
+
+    const booth = ['boothVideo', 'boothPhoto', 'boothStatus'].map(id => document.getElementById(id));
+    document.getElementById('boothCapture').addEventListener('click', () => {
+      TalkDemo.capturePhoto(...booth).then(() => {
+        document.getElementById('boothRetake').disabled = !TalkDemo.state.photo;
+      });
+    });
+    document.getElementById('boothRetake').addEventListener('click', () => {
+      document.getElementById('boothRetake').disabled = true;
+      TalkDemo.retakePhoto(...booth);
+    });
+
+    Reveal.on('fragmentshown', syncPeel);
+    Reveal.on('fragmentshown', syncWire);
+    Reveal.on('fragmenthidden', syncPeel);
+    Reveal.on('fragmenthidden', syncWire);
+
+    Reveal.on('slidechanged', e => {
+      TalkDemo.pauseAll();
+      syncPeel();
+      syncWire();
+      document.getElementById('naiveToggle').textContent = 'Start';
+      document.getElementById('fountainToggle').textContent = 'Start';
+      if (e.currentSlide.id === 'photo' && !TalkDemo.state.photo) {
+        TalkDemo.startBooth(
+          document.getElementById('boothVideo'), document.getElementById('boothStatus'));
+      } else {
+        TalkDemo.stopBooth();
+      }
+      updateChunkProgress();
+    });
+
+    // --- chunk-grid deck progress ------------------------------------------
+    function buildChunkProgress() {
+      const el = document.getElementById('chunkProgress');
+      for (let i = 0; i < Reveal.getTotalSlides(); i++) el.appendChild(document.createElement('span'));
+      updateChunkProgress();
+    }
+
+    function updateChunkProgress() {
+      const past = Reveal.getSlidePastCount();
+      document.querySelectorAll('#chunkProgress span')
+        .forEach((s, i) => s.classList.toggle('got', i <= past));
+    }
+
+    // Paint `text` as a QR code (EC M) onto `canvas`, cells sized to fit maxPx.
+    function paintQr(canvas, text, maxPx) {
+      const qr = qrcode(0, 'M');
+      qr.addData(text);
+      qr.make();
+      const modules = qr.getModuleCount();
+      const cell = Math.max(2, Math.floor(maxPx / modules));
+      const size = modules * cell;
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#000';
+      for (let r = 0; r < modules; r++) {
+        for (let c = 0; c < modules; c++) {
+          if (qr.isDark(r, c)) ctx.fillRect(c * cell, r * cell, cell, cell);
+        }
+      }
+      return { modules, cell, size };
+    }
+
+    // --- measurement charts (from slides/measurements.json) ---------------------
+    async function renderCharts() {
+      let data;
+      try {
+        data = await fetch('measurements.json').then(r => r.json());
+      } catch (e) { return; }   // deck still works without the data file
+      const rows = data.rows;
+
+      lineChart(document.getElementById('couponChart'), [
+        { label: 'naive loop', color: '#f66', points: rows.map(r => ({ x: r.loss, y: r.naiveSecs })) },
+      ], { yLabel: 'seconds to complete', xLabel: 'frame loss rate' });
+
+      lineChart(document.getElementById('beforeAfterChart'), [
+        { label: 'naive loop', color: '#f66', points: rows.map(r => ({ x: r.loss, y: r.naiveSecs })) },
+        { label: 'fountain', color: '#2a7', points: rows.map(r => ({ x: r.loss, y: r.fountainSecs })) },
+      ], { yLabel: 'seconds to complete', xLabel: 'frame loss rate' });
+    }
+
+    // Minimal canvas line chart, sized to the canvas's backing resolution.
+    function lineChart(canvas, series, { yLabel, xLabel }) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, pad = 70;
+      ctx.clearRect(0, 0, W, H);
+      const xs = series[0].points.map(p => p.x);
+      const xMin = Math.min(...xs), xMax = Math.max(...xs);
+      const top = Math.max(...series.flatMap(s => s.points.map(p => p.y))) * 1.1;
+      const px = x => pad + (x - xMin) / (xMax - xMin || 1) * (W - pad - 20);
+      const py = y => H - pad - y / top * (H - pad - 30);
+
+      ctx.strokeStyle = '#333'; ctx.fillStyle = '#999';
+      ctx.font = '18px system-ui'; ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i++) {
+        const yy = py(top * i / 5);
+        ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 20, yy); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.fillText(Math.round(top * i / 5), pad - 8, yy + 6);
+      }
+      ctx.textAlign = 'center';
+      for (const x of xs) ctx.fillText((x * 100) + '%', px(x), H - pad + 26);
+      ctx.fillText(xLabel, W / 2, H - 12);
+      ctx.save(); ctx.translate(20, H / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText(yLabel, 0, 0); ctx.restore();
+
+      for (const s of series) {
+        ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        s.points.forEach((p, i) => {
+          const X = px(p.x), Y = py(p.y);
+          i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+        });
+        ctx.stroke();
+        s.points.forEach(p => { ctx.beginPath(); ctx.arc(px(p.x), py(p.y), 4, 0, 7); ctx.fill(); });
+      }
+      ctx.textAlign = 'left';
+      series.forEach((s, i) => {
+        ctx.fillStyle = s.color;
+        ctx.fillText(s.label, pad + 12, 28 + i * 24);
+      });
+    }
+
+    // --- bandwidth waterfall: theoretical → measured ---------------------------
+    // Bars 1–3 come from QR/protocol constants; 4–6 need the on-camera `run` block
+    // in measurements.json and render as "pending" until it exists.
+    async function renderWaterfall() {
+      const canvas = document.getElementById('waterfallChart');
+      if (!canvas) return;
+      let data;
+      try {
+        data = await fetch('measurements.json').then(r => r.json());
+      } catch (e) { return; }
+      const run = data.run;
+      const fps = run?.fps ?? data.params.fps;
+      const chunk = run?.chunkSize ?? data.params.chunkSize;
+      const bars = [
+        { label: [`QR v${data.qr.version} symbol`, '(EC L)'], value: data.qr.bytesL * fps },
+        { label: ['after RS parity', '(EC M)'], value: data.qr.bytesM * fps },
+        { label: ['after header', '+ base64'], value: chunk * fps },
+      ];
+      if (run) {
+        const caught = run.framesRx / (run.durationS * fps);
+        const overhead = run.framesRx / run.K;   // dup waste (naive) or LT overhead (fountain)
+        bars.push({ label: ['frames the', 'camera caught'], value: chunk * fps * caught });
+        bars.push({
+          label: run.mode === 'fountain' ? ['after', 'overhead'] : ['after dup', 'waste (naive)'],
+          value: chunk * fps * caught / overhead
+        });
+        bars.push({ label: ['measured', 'goodput'], value: run.fileSize / run.durationS, measured: true });
+        const note = document.getElementById('waterfallRun');
+        if (note) note.textContent = ` - on-camera run: ${run.mode} · K=${run.K} · ${run.detector} @ ${run.scanRate} scans/s · ` +
+          `${Math.round((1 - caught) * 100)}% of frames missed · ${overhead.toFixed(2)}× frames per chunk`;
+      } else {
+        bars.push({ label: ['frames the', 'camera caught'], pending: true });
+        bars.push({ label: ['after', 'overhead'], pending: true });
+        bars.push({ label: ['measured', 'goodput'], pending: true });
+      }
+
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, padL = 90, padB = 80, padT = 48;
+      const plotW = W - padL - 30, plotH = H - padB - padT;
+      const max = bars[0].value, slot = plotW / bars.length, bw = slot * 0.62;
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = '17px system-ui'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = padT + plotH - plotH * i / 4;
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - 30, y); ctx.stroke();
+        ctx.fillStyle = '#999'; ctx.textAlign = 'right';
+        ctx.fillText(Math.round(max * i / 4).toLocaleString(), padL - 10, y + 6);
+      }
+      bars.forEach((b, i) => {
+        const x = padL + slot * i + (slot - bw) / 2;
+        ctx.textAlign = 'center';
+        if (b.pending) {
+          ctx.setLineDash([8, 6]); ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+          ctx.strokeRect(x, padT + plotH * 0.55, bw, plotH * 0.45);
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#777'; ctx.fillText('pending', x + bw / 2, padT + plotH * 0.55 - 12);
+          ctx.fillText('real run', x + bw / 2, padT + plotH * 0.55 + 12);
+        } else {
+          const h = b.value / max * plotH, top = padT + plotH - h;
+          ctx.fillStyle = b.measured ? '#fa5' : '#2a7';
+          ctx.fillRect(x, top, bw, h);
+          ctx.fillStyle = '#eee';
+          ctx.fillText(Math.round(b.value).toLocaleString() + ' B/s', x + bw / 2, top - 10);
+        }
+        ctx.fillStyle = '#bbb';
+        ctx.fillText(b.label[0], x + bw / 2, H - padB + 28);
+        ctx.fillText(b.label[1], x + bw / 2, H - padB + 50);
+      });
+    }
+
+    // --- soliton degree distribution (live from lib/protocol.js) -----------------------
+    function renderSoliton() {
+      const canvas = document.getElementById('solitonChart');
+      if (!canvas || !Protocol.solitonPmf) return;
+      const K = 64;
+      const { pmf, pivot } = Protocol.solitonPmf(K);
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, padL = 70, padB = 46, padT = 16;
+      ctx.clearRect(0, 0, W, H);
+      const maxP = Math.max(...pmf);
+      const plotW = W - padL - 20, plotH = H - padB - padT;
+      const bw = plotW / K;
+      const barX = d => padL + (d - 1) * bw;
+      const barTop = p => padT + plotH - p / maxP * plotH;
+
+      ctx.strokeStyle = '#333'; ctx.fillStyle = '#999'; ctx.font = '16px system-ui'; ctx.textAlign = 'right';
+      for (let i = 0; i <= 4; i++) {
+        const p = maxP * i / 4, y = barTop(p);
+        ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - 20, y); ctx.stroke();
+        ctx.fillText(p.toFixed(2), padL - 8, y + 5);
+      }
+      for (let d = 1; d <= K; d++) {
+        ctx.fillStyle = d === 1 ? '#78f' : d === pivot ? '#fa5' : '#2a7';
+        const top = barTop(pmf[d]);
+        ctx.fillRect(barX(d) + 1, top, Math.max(1, bw - 2), padT + plotH - top);
+      }
+      ctx.fillStyle = '#999'; ctx.textAlign = 'center';
+      for (const d of [1, 2, pivot, K]) ctx.fillText(d, barX(d) + bw / 2, H - padB + 22);
+      ctx.fillText('frame degree (chunks XORed together)', W / 2, H - 10);
+      ctx.save(); ctx.translate(20, padT + plotH / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText('P(degree)', 0, 0); ctx.restore();
+    }
+
+    // --- peeling-decoder walkthrough ------------------------------------------
+    // Curated input (5 chunks, 6 frames) chosen to cascade cleanly; the peeling
+    // itself is the real algorithm, snapshotted after each solve for narration.
+    const PEEL_FRAMES = [[2], [2, 4], [0, 4], [0, 1, 2], [1, 3], [0, 3]];
+    const PEEL_K = 5;
+
+    function buildPeelStates(K, frames) {
+      const solved = new Array(K).fill(false);
+      const used = new Set();
+      const states = [];
+      const snap = (activeFrame, caption, redundantFrame) =>
+        states.push({ solved: solved.slice(), activeFrame, caption, redundantFrame });
+
+      snap(null, 'Six frames arrive. Each is the XOR of a random subset of the five chunks.');
+      let progress = true;
+      while (progress) {
+        progress = false;
+        for (let fi = 0; fi < frames.length; fi++) {
+          const pending = frames[fi].filter(i => !solved[i]);
+          if (pending.length === 1 && !used.has(fi)) {
+            solved[pending[0]] = true;
+            used.add(fi);
+            snap(fi, `f${fi} has one unknown chunk -> chunk c${pending[0]} drops out into the clear. XOR it out of every frame that held it, and the next frame becomes ready.`);
+            progress = true;
+            break;
+          }
+        }
+      }
+      const redundant = frames.findIndex((_, fi) => !used.has(fi));
+      snap(null, `All five chunks received. f${redundant} was never needed.`, redundant);
+      return states;
+    }
+
+    const PEEL_STATES = buildPeelStates(PEEL_K, PEEL_FRAMES);
+
+    function renderPeel(step) {
+      const st = PEEL_STATES[Math.max(0, Math.min(PEEL_STATES.length - 1, step))];
+      document.getElementById('peelChunks').innerHTML = Array.from({ length: PEEL_K }, (_, i) =>
+        `<div class="pchunk ${st.solved[i] ? 'solved' : ''}">c${i}</div>`).join('');
+      document.getElementById('peelFrames').innerHTML = PEEL_FRAMES.map((f, fi) => {
+        const pending = f.filter(i => !st.solved[i]).length;
+        const cls = ['frow'];
+        if (st.activeFrame === fi) cls.push('active');
+        else if (pending === 1) cls.push('ready');
+        if (st.redundantFrame === fi) cls.push('redundant');
+        const chips = f.map(i => `<span class="chip ${st.solved[i] ? 'solved' : ''}">c${i}</span>`)
+          .join('<span class="xor">⊕</span>');
+        return `<div class="${cls.join(' ')}"><span class="flabel">f${fi}</span>${chips}<span class="deg">deg ${pending}</span></div>`;
+      }).join('');
+      document.getElementById('peelCaption').textContent = st.caption;
+    }
+
+    // Drive the walkthrough from reveal fragments so → / ← step it like any slide.
+    // Highlight the wire field that matches the number of legend steps shown.
+    function syncWire() {
+      const line = document.querySelector('#wire p.wire:not(.v2)');
+      if (!line) return;
+      const step = document.querySelectorAll('#wire .fragment.visible').length;
+      const fields = line.querySelectorAll('.f');
+      const active = step >= 1 && step <= fields.length;
+      line.classList.toggle('stepping', active);
+      fields.forEach((el, i) => el.classList.toggle('hl', active && i === step - 1));
+    }
+
+    function syncPeel() {
+      renderPeel(document.querySelectorAll('#peel .peel-step.visible').length);
+    }
+
+    // --- QR anatomy slide: live sample + color-coded structural regions -------
+    // Alignment-pattern center coordinates per version (enough for small samples).
+    const ALIGN_POS = {
+      1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30],
+      6: [6, 34], 7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50]
+    };
+
+    function renderAnatomy() {
+      // Own-domain decoy page: scanner previews show this origin, not the destination.
+      const { modules: m, cell, size } = paintQr(
+        document.getElementById('anatomyQr'),
+        new URL('deep-dive.html', location.href).href, 560);
+
+      const layer = (id, color) => {
+        const cv = document.getElementById(id);
+        cv.width = cv.height = size;
+        const lctx = cv.getContext('2d');
+        lctx.fillStyle = color;
+        return (r, c, h, w) => lctx.fillRect(c * cell, r * cell, w * cell, h * cell);
+      };
+
+      const finder = layer('ovFinder', 'rgba(34,170,119,.55)');
+      finder(0, 0, 8, 8); finder(0, m - 8, 8, 8); finder(m - 8, 0, 8, 8);
+
+      const timing = layer('ovTiming', 'rgba(250,165,85,.65)');
+      timing(6, 8, 1, m - 16); timing(8, 6, m - 16, 1);
+
+      const align = layer('ovAlign', 'rgba(119,136,255,.6)');
+      const centers = ALIGN_POS[(m - 17) / 4] || [];
+      for (const r of centers) {
+        for (const c of centers) {
+          const inFinder = (r < 9 && c < 9) || (r < 9 && c > m - 10) || (r > m - 10 && c < 9);
+          if (!inFinder) align(r - 2, c - 2, 5, 5);
+        }
+      }
+
+      const format = layer('ovFormat', 'rgba(238,102,170,.6)');
+      format(8, 0, 1, 9); format(0, 8, 9, 1);   // around top-left finder
+      format(8, m - 8, 1, 8);                    // under top-right finder
+      format(m - 8, 8, 8, 1);                    // beside bottom-left finder
+    }
+
+    // --- audience join QR (receiver URL on this network) ---------------------
+    function renderJoinQr() {
+      // Resolve against the deck URL, not the origin - survives a GitHub Pages subpath.
+      const url = new URL('../tools/receiver.html', location.href).href;
+      document.querySelectorAll('.joinUrl, .joinNote').forEach(el => { el.textContent = url; });
+      document.querySelectorAll('.joinQr').forEach(cv => paintQr(cv, url, 400));
+    }
+
+    function renderRepoQr() {
+      // Prank: the visible caption reads as the real repo, but the QR anyone scans
+      // goes to the Rick Roll. Hardcoded absolute URL so it survives this deck being
+      // copied into the shared presentations repo (a relative link would 404 there).
+      paintQr(document.getElementById('repoQr'),
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 400);
+    }
+  </script>
+</body>
+
+</html>

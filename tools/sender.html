@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sender</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .8rem;
+      padding: 1.5rem;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 1.2rem;
+      margin: 0;
+    }
+
+    .row {
+      display: flex;
+      gap: .8rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label {
+      color: #aaa;
+      font-size: .9rem;
+    }
+
+    input,
+    button,
+    select {
+      font-size: 1rem;
+      padding: .4rem .8rem;
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 4px;
+    }
+
+    input[type=number] {
+      width: 5.5rem;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    #toggle {
+      background: #2a7;
+      border: none;
+      color: #fff;
+      min-width: 6rem;
+    }
+
+    #toggle:disabled {
+      background: #333;
+      color: #777;
+    }
+
+    /* White padding around the canvas is the QR quiet zone - scanners need it. */
+    #frame {
+      background: #fff;
+      padding: 24px;
+      line-height: 0;
+    }
+
+    #meta,
+    #status {
+      color: #999;
+      font-size: .9rem;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    #error {
+      color: #f66;
+    }
+
+    #share {
+      text-align: center;
+      margin-top: .4rem;
+    }
+
+    #share canvas {
+      width: 130px;
+      height: 130px;
+      padding: 8px;
+      background: #fff;
+      border-radius: 6px;
+      image-rendering: pixelated;
+    }
+
+    #share div {
+      color: #999;
+      font-size: .8rem;
+      margin-top: .3rem;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Sender</h1>
+  <div class="row">
+    <input type="file" id="file">
+    <button id="sample">50 KB sample</button>
+    <input id="text" placeholder="…or quick text ⏎" size="16">
+  </div>
+  <div class="row">
+    <label>mode <select id="mode">
+        <option value="naive">naive loop</option>
+        <option value="fountain">fountain (LT)</option>
+      </select></label>
+    <label>chunk bytes <input type="number" id="chunkSize" value="400" min="10" max="2000" step="10"></label>
+    <label>fps <input type="number" id="fps" value="10" min="1" max="60"></label>
+    <button id="toggle" disabled>Start</button>
+  </div>
+  <div id="frame"><canvas id="canvas"></canvas></div>
+  <div id="meta"></div>
+  <div id="status"></div>
+  <div id="error"></div>
+  <div id="share">
+    <canvas id="shareQr"></canvas>
+    <div>open the receiver -> point your phone here</div>
+  </div>
+
+  <script src="../vendor/qrcode.js"></script>
+  <script src="../lib/protocol.js?v=2"></script>
+  <script>
+    const els = Object.fromEntries(
+      ['file', 'sample', 'text', 'mode', 'chunkSize', 'fps', 'toggle', 'canvas', 'meta', 'status', 'error']
+        .map(id => [id, document.getElementById(id)]));
+    const ctx = els.canvas.getContext('2d');
+
+    const state = {
+      payload: null,           // { bytes, name, mime, fileId }
+      frames: [], qrCache: [], // naive mode
+      ft: null, seedBase: 0,   // fountain mode
+      idx: 0, cycles: 0, swaps: 0,
+      playing: false, lastSwap: 0, startedAt: 0,
+    };
+
+    function setPayload(bytes, name, mime) {
+      const payload = { bytes, name, mime, fileId: Protocol.randomFileId(), sha: '' };
+      state.payload = payload;
+      rebuildFrames();
+      // Fingerprint to compare with the receiver's line - proof of a byte-perfect transfer.
+      crypto.subtle.digest('SHA-256', bytes).then(h => {
+        payload.sha = Array.from(new Uint8Array(h).slice(0, 8), b => b.toString(16).padStart(2, '0')).join('');
+        if (state.payload === payload) showMeta();
+      });
+    }
+
+    function showMeta() {
+      els.meta.textContent = state.metaBase + (state.payload.sha ? ` · sha256 ${state.payload.sha}…` : '');
+    }
+
+    function rebuildFrames() {
+      if (!state.payload) return;
+      const chunkSize = Math.max(10, Number(els.chunkSize.value) || 400);
+      const { bytes, name, mime, fileId } = state.payload;
+      const fountain = els.mode.value === 'fountain';
+      state.ft = fountain ? Protocol.makeFountainContext(bytes, { fileId, name, mime, chunkSize }) : null;
+      state.frames = fountain ? [] : Protocol.makeFrames(bytes, { fileId, name, mime, chunkSize });
+      state.qrCache = new Array(state.frames.length);
+      const seed = new Uint32Array(1);
+      crypto.getRandomValues(seed);
+      state.seedBase = seed[0];
+      state.idx = 0; state.cycles = 0; state.swaps = 0; state.startedAt = 0;
+      state.playing = false;
+      els.toggle.textContent = 'Start';
+      els.error.textContent = '';
+      els.status.textContent = '';
+      let sample, qr;
+      try {
+        sample = fountain ? Protocol.fountainFrame(state.ft, state.seedBase) : state.frames[0];
+        qr = fountain ? qrFromString(sample) : getQr(0);
+        drawQr(qr);
+      } catch (e) {
+        els.toggle.disabled = true;
+        els.meta.textContent = '';
+        els.error.textContent = 'Chunk too large for one QR code; reduce chunk bytes.';
+        return;
+      }
+      els.toggle.disabled = false;
+      const K = fountain ? state.ft.K : state.frames.length;
+      const version = (qr.getModuleCount() - 17) / 4;
+      const fps = Number(els.fps.value) || 10;
+      state.metaBase =
+        `${name} · ${bytes.length.toLocaleString()} bytes → ${K} chunks of ≤${chunkSize} · ` +
+        `${sample.length} chars/frame → QR v${version} (EC M) · id ${fileId} · ` +
+        `${fountain ? 'fountain' : 'naive'} · theoretical ${(chunkSize * fps).toLocaleString()} B/s`;
+      showMeta();
+    }
+
+    function qrFromString(s) {
+      const qr = qrcode(0, 'M');
+      qr.addData(s);
+      qr.make();
+      return qr;
+    }
+
+    function getQr(i) {
+      if (!state.qrCache[i]) state.qrCache[i] = qrFromString(state.frames[i]);
+      return state.qrCache[i];
+    }
+
+    function drawQr(qr) {
+      const modules = qr.getModuleCount();
+      // Fit the viewport (96px = body + quiet-zone padding); draw in device pixels for crispness.
+      const dpr = window.devicePixelRatio || 1;
+      const availCss = Math.max(160, Math.min(480, document.documentElement.clientWidth - 96));
+      const cell = Math.max(2, Math.floor(availCss * dpr / modules));
+      const size = modules * cell;
+      if (els.canvas.width !== size) {
+        els.canvas.width = els.canvas.height = size;
+        els.canvas.style.width = els.canvas.style.height = (size / dpr) + 'px';
+      }
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#000';
+      for (let r = 0; r < modules; r++) {
+        for (let c = 0; c < modules; c++) {
+          if (qr.isDark(r, c)) ctx.fillRect(c * cell, r * cell, cell, cell);
+        }
+      }
+    }
+
+    function step(now) {
+      if (!state.playing || (!state.frames.length && !state.ft)) return;
+      if (now - state.lastSwap < 1000 / (Number(els.fps.value) || 10)) return;
+      state.lastSwap = now;
+      state.swaps++;
+      let progress;
+      if (state.ft) {
+        drawQr(qrFromString(Protocol.fountainFrame(state.ft, (state.seedBase + state.swaps) >>> 0)));
+        progress = `frame #${state.swaps} · ${(state.swaps / state.ft.K).toFixed(2)}×K (K=${state.ft.K})`;
+      } else {
+        state.idx = (state.idx + 1) % state.frames.length;
+        if (state.idx === 0) state.cycles++;
+        drawQr(getQr(state.idx));
+        progress = `frame ${state.idx + 1}/${state.frames.length} · cycle ${state.cycles + 1}`;
+      }
+      const elapsed = (now - state.startedAt) / 1000;
+      els.status.textContent =
+        `${progress} · ${(state.swaps / elapsed).toFixed(1)} fps actual · ${elapsed.toFixed(0)}s`;
+    }
+
+    function loop(now) {
+      step(now);
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+    // rAF never fires in hidden tabs; this keeps time-based swaps alive (throttled to ~1/s) there.
+    setInterval(() => step(performance.now()), 250);
+
+    els.toggle.addEventListener('click', () => {
+      state.playing = !state.playing;
+      if (state.playing && !state.startedAt) state.startedAt = performance.now();
+      els.toggle.textContent = state.playing ? 'Pause' : 'Start';
+    });
+
+    els.file.addEventListener('change', async () => {
+      const f = els.file.files[0];
+      if (!f) return;
+      setPayload(new Uint8Array(await f.arrayBuffer()), f.name, f.type || 'application/octet-stream');
+    });
+
+    els.sample.addEventListener('click', () => {
+      const bytes = new Uint8Array(50 * 1024);
+      crypto.getRandomValues(bytes);
+      setPayload(bytes, 'sample-50k.bin', 'application/octet-stream');
+    });
+
+    els.text.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && els.text.value) {
+        setPayload(new TextEncoder().encode(els.text.value), 'message.txt', 'text/plain');
+      }
+    });
+
+    els.chunkSize.addEventListener('change', rebuildFrames);
+    els.mode.addEventListener('change', rebuildFrames);
+
+    window.addEventListener('resize', () => {
+      if (state.frames.length) drawQr(getQr(state.idx));
+    });
+
+    // QR of the receiver's URL (same folder), so a phone can get there without typing.
+    (function renderShareQr() {
+      const qr = qrcode(0, 'M');
+      qr.addData(new URL('receiver.html', location.href).href);
+      qr.make();
+      const canvas = document.getElementById('shareQr');
+      const modules = qr.getModuleCount();
+      const cell = Math.max(2, Math.floor(300 / modules));
+      canvas.width = canvas.height = modules * cell;
+      const c = canvas.getContext('2d');
+      c.fillStyle = '#fff';
+      c.fillRect(0, 0, canvas.width, canvas.height);
+      c.fillStyle = '#000';
+      for (let r = 0; r < modules; r++) {
+        for (let col = 0; col < modules; col++) {
+          if (qr.isDark(r, col)) c.fillRect(col * cell, r * cell, cell, cell);
+        }
+      }
+    })();
+
+    // Console/test hook - also handy for driving the demo from devtools on stage.
+    window.senderApi = { setPayload, state };
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Measurement Sweep</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.5rem;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 1.2rem;
+      margin: 0;
+    }
+
+    .row {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label {
+      color: #aaa;
+      font-size: .9rem;
+    }
+
+    input {
+      width: 5rem;
+      font-size: 1rem;
+      padding: .3rem .5rem;
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 4px;
+    }
+
+    button {
+      font-size: 1rem;
+      padding: .4rem 1.2rem;
+      border: none;
+      border-radius: 6px;
+      background: #2a7;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    button.ghost {
+      background: #333;
+      color: #ccc;
+    }
+
+    canvas.chart {
+      background: #1a1a1a;
+      border-radius: 8px;
+    }
+
+    table {
+      border-collapse: collapse;
+      font-size: .85rem;
+    }
+
+    th,
+    td {
+      padding: .2rem .7rem;
+      border-bottom: 1px solid #333;
+      text-align: right;
+    }
+
+    th {
+      color: #999;
+    }
+
+    #status {
+      color: #fa5;
+      min-height: 1.2em;
+    }
+
+    textarea {
+      width: min(700px, 92vw);
+      height: 8rem;
+      background: #1a1a1a;
+      color: #9c9;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-family: ui-monospace, monospace;
+      font-size: .75rem;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Measurement Sweep</h1>
+  <p style="color:#999;font-size:.85rem;max-width:640px;text-align:center">
+    Runs the real <code>lib/protocol.js</code> encoder/decoder over controlled frame-loss
+    rates - no camera. Naive re-sends chunks 1…K on a loop; fountain streams LT
+    frames. Wall-clock is measured in frames sent (= seconds × fps).</p>
+
+  <div class="row">
+    <label>K (chunks) <input type="number" id="K" value="128"></label>
+    <label>chunk bytes <input type="number" id="chunkSize" value="400"></label>
+    <label>fps <input type="number" id="fps" value="10"></label>
+    <label>trials <input type="number" id="trials" value="40"></label>
+    <button id="run">Run sweep</button>
+  </div>
+  <div id="status"></div>
+
+  <canvas id="timeChart" class="chart" width="720" height="360"></canvas>
+  <canvas id="overheadChart" class="chart" width="720" height="300"></canvas>
+
+  <table id="table"></table>
+
+  <div class="row">
+    <button id="copy" class="ghost">Copy JSON</button>
+    <button id="copyCsv" class="ghost">Copy CSV</button>
+  </div>
+  <textarea id="out" readonly></textarea>
+
+  <script src="../lib/protocol.js?v=2"></script>
+  <script>
+    const $ = id => document.getElementById(id);
+    const LOSS_RATES = [0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50];
+
+    // Local seeded PRNG so a sweep is reproducible (lib/protocol.js keeps its own internal).
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return () => {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // Frames SENT before all K chunks arrive, naive cyclic sender under iid loss.
+    function naiveFramesSent(K, p, rnd) {
+      const got = new Uint8Array(K);
+      let have = 0, sent = 0;
+      const cap = K * 2000;
+      while (have < K && sent < cap) {
+        const idx = sent % K;
+        sent++;
+        if (rnd() < p) continue;
+        if (!got[idx]) { got[idx] = 1; have++; }
+      }
+      return have === K ? sent : Infinity;
+    }
+
+    // Frames SENT before the decoder finishes, LT fountain under iid loss.
+    function fountainFramesSent(ctx, K, p, rnd, seedBase) {
+      const dec = new Protocol.FountainDecoder(K, ctx.chunkSize);
+      let sent = 0, received = 0;
+      const cap = K * 200;
+      while (!dec.done() && sent < cap) {
+        const seed = (seedBase + sent) >>> 0;
+        sent++;
+        if (rnd() < p) continue;
+        received++;
+        const f = Protocol.parseFrame(Protocol.fountainFrame(ctx, seed));
+        dec.addFrame(f.seed, f.xor);
+      }
+      return dec.done() ? { sent, received } : { sent: Infinity, received };
+    }
+
+    let lastResult = null;
+
+    async function runSweep() {
+      const K = Math.max(1, Number($('K').value) || 128);
+      const chunkSize = Math.max(10, Number($('chunkSize').value) || 400);
+      const fps = Math.max(1, Number($('fps').value) || 10);
+      const trials = Math.max(1, Number($('trials').value) || 40);
+      $('status').textContent = 'running…';
+      $('run').disabled = true;
+      await new Promise(r => setTimeout(r)); // let the status paint
+
+      const payload = new Uint8Array(K * chunkSize);
+      crypto.getRandomValues(payload.subarray(0, Math.min(payload.length, 65536)));
+      const ctx = Protocol.makeFountainContext(payload, {
+        fileId: 'sweep', name: 's.bin', mime: 'application/octet-stream', chunkSize,
+      });
+
+      const rows = [];
+      for (const p of LOSS_RATES) {
+        const rnd = mulberry32(0xC0FFEE ^ Math.round(p * 1000));
+        let naiveSum = 0, ftSum = 0, ovSum = 0;
+        for (let t = 0; t < trials; t++) {
+          naiveSum += naiveFramesSent(K, p, rnd);
+          const ft = fountainFramesSent(ctx, K, p, rnd, (t * 500003) >>> 0);
+          ftSum += ft.sent;
+          ovSum += ft.received / K;
+        }
+        rows.push({
+          loss: p,
+          naiveFrames: Math.round(naiveSum / trials),
+          fountainFrames: Math.round(ftSum / trials),
+          naiveSecs: +(naiveSum / trials / fps).toFixed(2),
+          fountainSecs: +(ftSum / trials / fps).toFixed(2),
+          overhead: +(ovSum / trials).toFixed(3),
+        });
+      }
+
+      lastResult = { params: { K, chunkSize, fps, trials }, rows };
+      drawCharts(lastResult);
+      drawTable(rows);
+      $('out').value = JSON.stringify(lastResult, null, 2);
+      $('status').textContent = `done · K=${K} · ${trials} trials/point`;
+      $('run').disabled = false;
+    }
+
+    // --- minimal canvas line chart -----------------------------------------
+    function lineChart(canvas, series, { yLabel, xLabel, yMax }) {
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, pad = 54;
+      ctx.clearRect(0, 0, W, H);
+      const xs = series[0].points.map(pt => pt.x);
+      const xMin = Math.min(...xs), xMax = Math.max(...xs);
+      const top = yMax || Math.max(...series.flatMap(s => s.points.map(pt => pt.y))) * 1.1;
+      const px = x => pad + (x - xMin) / (xMax - xMin || 1) * (W - pad - 12);
+      const py = y => H - pad - Math.min(y, top) / top * (H - pad - 24);
+
+      ctx.strokeStyle = '#333'; ctx.fillStyle = '#999'; ctx.font = '12px system-ui';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i++) {
+        const y = top * i / 5, yy = py(y);
+        ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(W - 12, yy); ctx.stroke();
+        ctx.textAlign = 'right'; ctx.fillText(Math.round(y), pad - 6, yy + 4);
+      }
+      ctx.textAlign = 'center';
+      for (const x of xs) ctx.fillText((x * 100) + '%', px(x), H - pad + 18);
+      ctx.fillText(xLabel, W / 2, H - 8);
+      ctx.save(); ctx.translate(14, H / 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText(yLabel, 0, 0); ctx.restore();
+
+      for (const s of series) {
+        ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        s.points.forEach((pt, i) => {
+          const X = px(pt.x), Y = py(pt.y);
+          i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+        });
+        ctx.stroke();
+        s.points.forEach(pt => { ctx.beginPath(); ctx.arc(px(pt.x), py(pt.y), 3, 0, 7); ctx.fill(); });
+      }
+      ctx.textAlign = 'left';
+      series.forEach((s, i) => {
+        ctx.fillStyle = s.color;
+        ctx.fillText(s.label, pad + 8, 18 + i * 16);
+      });
+    }
+
+    function drawCharts({ rows }) {
+      lineChart($('timeChart'), [
+        { label: 'naive (loop)', color: '#f66', points: rows.map(r => ({ x: r.loss, y: r.naiveSecs })) },
+        { label: 'fountain (LT)', color: '#2a7', points: rows.map(r => ({ x: r.loss, y: r.fountainSecs })) },
+      ], { yLabel: 'seconds to complete', xLabel: 'frame loss rate' });
+
+      lineChart($('overheadChart'), [
+        { label: 'fountain overhead (× K)', color: '#78f', points: rows.map(r => ({ x: r.loss, y: r.overhead })) },
+      ], { yLabel: 'received frames ÷ K', xLabel: 'frame loss rate', yMax: 3 });
+    }
+
+    function drawTable(rows) {
+      const head = '<tr><th>loss</th><th>naive frames</th><th>fountain frames</th>' +
+        '<th>naive s</th><th>fountain s</th><th>overhead ×K</th></tr>';
+      const body = rows.map(r => `<tr><td>${(r.loss * 100)}%</td><td>${isFinite(r.naiveFrames) ? r.naiveFrames : '∞'}</td>` +
+        `<td>${r.fountainFrames}</td><td>${isFinite(r.naiveSecs) ? r.naiveSecs : '∞'}</td>` +
+        `<td>${r.fountainSecs}</td><td>${r.overhead}</td></tr>`).join('');
+      $('table').innerHTML = head + body;
+    }
+
+    function toCsv({ rows }) {
+      const header = 'loss,naive_frames,fountain_frames,naive_secs,fountain_secs,overhead_xK';
+      return [header, ...rows.map(r =>
+        [r.loss, r.naiveFrames, r.fountainFrames, r.naiveSecs, r.fountainSecs, r.overhead].join(','))].join('\n');
+    }
+
+    $('run').addEventListener('click', runSweep);
+    $('copy').addEventListener('click', () => lastResult &&
+      navigator.clipboard.writeText(JSON.stringify(lastResult, null, 2)));
+    $('copyCsv').addEventListener('click', () => lastResult &&
+      navigator.clipboard.writeText(toCsv(lastResult)));
+
+    runSweep();
+    window.measureApi = { runSweep, get result() { return lastResult; } };
+  </script>
+</body>
+
+</html>

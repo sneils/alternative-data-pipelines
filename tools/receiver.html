@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receiver</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .8rem;
+      padding: 1.5rem;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 1.2rem;
+      margin: 0;
+    }
+
+    video {
+      width: min(480px, 90vw);
+      border-radius: 8px;
+      background: #000;
+    }
+
+    button {
+      font-size: 1rem;
+      padding: .5rem 1.2rem;
+      border-radius: 6px;
+      border: none;
+      background: #2a7;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    #reset {
+      background: #333;
+      color: #ccc;
+    }
+
+    #progressWrap {
+      width: min(480px, 90vw);
+      height: 24px;
+      position: relative;
+      background: #222;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    #progressBar {
+      height: 100%;
+      width: 0;
+      background: #2a7;
+      transition: width .15s;
+    }
+
+    #progressText {
+      position: absolute;
+      inset: 0;
+      text-align: center;
+      font-size: .85rem;
+      line-height: 24px;
+    }
+
+    #missing {
+      color: #fa5;
+      font-size: .9rem;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    #result {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    #result a {
+      color: #6f6;
+      font-size: 1.1rem;
+    }
+
+    #result img {
+      max-width: min(480px, 90vw);
+      border-radius: 8px;
+    }
+
+    #result .preview {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .4rem;
+    }
+
+    #result .bytemap {
+      width: min(480px, 90vw);
+      image-rendering: pixelated;
+      border-radius: 8px;
+    }
+
+    #result .sha {
+      color: #9c9;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: .85rem;
+    }
+
+    #result .text {
+      max-width: min(480px, 90vw);
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #1a1a1a;
+      padding: .8rem;
+      border-radius: 6px;
+    }
+
+    #stats,
+    #raw {
+      color: #999;
+      font-size: .9rem;
+      min-height: 1.2em;
+    }
+
+    #error {
+      color: #f66;
+      max-width: 480px;
+      text-align: center;
+    }
+
+    #offline {
+      color: #2a7;
+      font-size: .85rem;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    #share {
+      text-align: center;
+      margin-top: .4rem;
+    }
+
+    #share canvas {
+      width: 150px;
+      height: 150px;
+      padding: 10px;
+      background: #fff;
+      border-radius: 6px;
+      image-rendering: pixelated;
+    }
+
+    #share div {
+      color: #999;
+      font-size: .8rem;
+      margin-top: .3rem;
+    }
+
+    .ghost {
+      background: #333;
+      color: #ccc;
+      font-size: .9rem;
+    }
+
+    #result .run {
+      max-width: min(480px, 90vw);
+      margin: 0;
+      padding: .6rem;
+      border-radius: 6px;
+      background: #1a1a1a;
+      color: #9c9;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: .72rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Receiver</h1>
+  <div id="offline"></div>
+  <button id="start">Start camera</button>
+  <video id="video" playsinline muted hidden></video>
+  <div id="progressWrap" hidden>
+    <div id="progressBar"></div>
+    <div id="progressText"></div>
+  </div>
+  <canvas id="grid" hidden></canvas>
+  <div id="missing"></div>
+  <div id="result"></div>
+  <div id="stats"></div>
+  <div id="raw"></div>
+  <div id="error"></div>
+  <div id="share">
+    <canvas id="shareQr"></canvas>
+    <div>pass it on</div>
+  </div>
+  <button id="reset" hidden>Reset</button>
+  <canvas id="grab" hidden></canvas>
+
+  <script src="../vendor/jsQR.js"></script>
+  <script src="../vendor/qrcode.js"></script>
+  <script src="../lib/protocol.js?v=2"></script>
+  <script>
+    const els = Object.fromEntries(
+      ['start', 'video', 'progressWrap', 'progressBar', 'progressText',
+        'grid', 'missing', 'result', 'stats', 'raw', 'error', 'reset', 'grab', 'offline']
+        .map(id => [id, document.getElementById(id)]));
+    const gridCtx = els.grid.getContext('2d');
+
+    const stats = { attempts: 0, hits: 0, bad: 0, dups: 0, rate: 0, windowStart: 0, windowAttempts: 0 };
+    // v1: { v, fileId, total, name, mime, chunks: Map(seq → bytes), bytes, startedAt, doneAt }
+    // v2: { v, fileId, K, fileSize, name, mime, decoder: FountainDecoder, framesRx, startedAt, doneAt }
+    let session = null;
+    let lastValue = null; // suppress re-decodes of the frame still on screen
+
+    function onDecoded(text) {
+      if (text === lastValue) return;
+      lastValue = text;
+      stats.hits++;
+      const f = Protocol.parseFrame(text);
+      if (!f) {
+        stats.bad++;
+        els.raw.textContent = 'foreign QR: ' + text.slice(0, 60);
+        return;
+      }
+      if (!session || session.fileId !== f.fileId) {
+        session = f.v === 1
+          ? {
+            v: 1, fileId: f.fileId, total: f.total, name: f.name, mime: f.mime,
+            chunks: new Map(), bytes: 0, startedAt: performance.now(), doneAt: 0
+          }
+          : {
+            v: 2, fileId: f.fileId, K: f.K, fileSize: f.fileSize, name: f.name, mime: f.mime,
+            decoder: new Protocol.FountainDecoder(f.K, f.xor.length), framesRx: 0,
+            startedAt: performance.now(), doneAt: 0
+          };
+        stats.dups = 0;
+        els.result.textContent = '';
+        els.reset.hidden = false;
+      }
+      if (f.v === 1) {
+        if (session.chunks.has(f.seq)) {
+          stats.dups++;
+        } else {
+          session.chunks.set(f.seq, f.chunk);
+          session.bytes += f.chunk.length;
+          if (session.chunks.size === session.total) complete();
+        }
+      } else {
+        session.framesRx++;
+        session.decoder.addFrame(f.seed, f.xor);
+        if (session.decoder.done() && !session.doneAt) complete();
+      }
+      updateProgress();
+    }
+
+    function chunksGot() { return session.v === 1 ? session.chunks.size : session.decoder.decodedCount; }
+    function chunksTotal() { return session.v === 1 ? session.total : session.K; }
+    function hasChunk(i) { return session.v === 1 ? session.chunks.has(i) : session.decoder.decoded[i] !== null; }
+
+    function updateProgress() {
+      els.progressWrap.hidden = false;
+      els.grid.hidden = false;
+      const got = chunksGot(), total = chunksTotal();
+      const pct = 100 * got / total;
+      const elapsed = ((session.doneAt || performance.now()) - session.startedAt) / 1000;
+      const bytesGot = session.v === 1 ? session.bytes
+        : Math.min(session.fileSize, got * session.decoder.chunkSize);
+      const goodput = elapsed > 0 ? bytesGot / elapsed : 0;
+      const extra = session.v === 1
+        ? `dups ${stats.dups}`
+        : `rx ${session.framesRx} · ${(session.framesRx / total).toFixed(2)}×K overhead`;
+      els.progressBar.style.width = pct + '%';
+      els.progressText.textContent =
+        `${got}/${total} chunks · ${pct.toFixed(1)}% · ${extra} · ` +
+        `${goodput.toFixed(0)} B/s · ${elapsed.toFixed(1)}s`;
+
+      const missing = [];
+      for (let i = 0; i < total && missing.length <= 10; i++) {
+        if (!hasChunk(i)) missing.push(i);
+      }
+      els.missing.textContent =
+        missing.length === 0 ? '' :
+          missing.length <= 10 ? `waiting for chunk${missing.length > 1 ? 's' : ''} #${missing.join(', #')}` :
+            `${total - got} chunks missing`;
+
+      drawGrid();
+    }
+
+    function drawGrid() {
+      const total = chunksTotal();
+      const cell = total > 400 ? 8 : 14, gap = 2;
+      const cols = Math.min(total, Math.floor(480 / (cell + gap)));
+      const rows = Math.ceil(total / cols);
+      els.grid.width = cols * (cell + gap) - gap;
+      els.grid.height = rows * (cell + gap) - gap;
+      for (let i = 0; i < total; i++) {
+        gridCtx.fillStyle = hasChunk(i) ? '#2a7' : '#333';
+        gridCtx.fillRect((i % cols) * (cell + gap), Math.floor(i / cols) * (cell + gap), cell, cell);
+      }
+    }
+
+    function complete() {
+      session.doneAt = performance.now();
+      let parts;
+      if (session.v === 1) {
+        parts = [];
+        for (let i = 0; i < session.total; i++) parts.push(session.chunks.get(i));
+      } else {
+        parts = [session.decoder.assemble(session.fileSize)];
+      }
+      const blob = new Blob(parts, { type: session.mime });
+      const url = URL.createObjectURL(blob);
+
+      // Show what arrived: image or text as themselves, anything else as a byte-map,
+      // always with a SHA-256 fingerprint to compare against the sender's.
+      const preview = document.createElement('div');
+      preview.className = 'preview';
+      els.result.appendChild(preview);
+      const isImage = session.mime.startsWith('image/');
+      const isText = session.mime === 'text/plain' && blob.size < 10000;
+      if (isImage) {
+        const img = new Image();
+        img.src = url;
+        preview.appendChild(img);
+      } else if (isText) {
+        blob.text().then(t => {
+          const div = document.createElement('div');
+          div.className = 'text';
+          div.textContent = t;
+          preview.prepend(div);
+        });
+      }
+      showReceivedBytes(blob, preview, !isImage && !isText);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = session.name;
+      a.textContent = `✓ ${session.name} -- click tp save`;
+      els.result.appendChild(a);
+
+      // Run stats for the measurements log (the deck's waterfall reads this shape).
+      const durationS = (session.doneAt - session.startedAt) / 1000;
+      const run = {
+        mode: session.v === 1 ? 'naive' : 'fountain',
+        K: chunksTotal(),
+        fileSize: blob.size,
+        chunkSize: session.v === 1 ? session.chunks.get(0).length : session.decoder.chunkSize,
+        framesRx: session.v === 1 ? session.chunks.size + stats.dups : session.framesRx,
+        durationS: +durationS.toFixed(2),
+        goodputBps: Math.round(blob.size / durationS),
+        scanRate: stats.rate,
+        detector: stats.detector,
+      };
+      const copy = document.createElement('button');
+      copy.className = 'ghost';
+      copy.textContent = 'Copy run stats';
+      copy.addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(run)));
+      const pre = document.createElement('pre');
+      pre.className = 'run';
+      pre.textContent = JSON.stringify(run);
+      els.result.append(copy, pre);
+    }
+
+    async function showReceivedBytes(blob, container, drawByteMap) {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (drawByteMap) {
+        // One grey pixel per byte, 256 wide; subsample big files to ≤256 rows.
+        const stride = Math.max(1, Math.ceil(bytes.length / 65536));
+        const n = Math.floor(bytes.length / stride);
+        const w = 256, h = Math.max(1, Math.ceil(n / w));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h; cv.className = 'bytemap';
+        const ctx = cv.getContext('2d');
+        const img = ctx.createImageData(w, h);
+        for (let i = 0; i < n; i++) {
+          const v = bytes[i * stride], o = i * 4;
+          img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+          img.data[o + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+        container.appendChild(cv);
+      }
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const sha = Array.from(new Uint8Array(digest).slice(0, 8), b => b.toString(16).padStart(2, '0')).join('');
+      const line = document.createElement('div');
+      line.className = 'sha';
+      line.textContent = `sha256 ${sha}… · ${bytes.length.toLocaleString()} bytes`;
+      container.appendChild(line);
+    }
+
+    function resetSession() {
+      session = null;
+      lastValue = null;
+      stats.dups = 0;
+      els.progressWrap.hidden = true;
+      els.grid.hidden = true;
+      els.missing.textContent = '';
+      els.result.textContent = '';
+      els.raw.textContent = '';
+    }
+    els.reset.addEventListener('click', resetSession);
+
+    // Prefer the native BarcodeDetector (Chrome/Android as it's much faster);
+    // fall back to jsQR on a downscaled canvas everywhere else (e.g. iOS Safari).
+    async function makeDetector() {
+      if ('BarcodeDetector' in window) {
+        try {
+          const formats = await BarcodeDetector.getSupportedFormats();
+          if (formats.includes('qr_code')) {
+            const detector = new BarcodeDetector({ formats: ['qr_code'] });
+            return {
+              name: 'BarcodeDetector',
+              async detect() {
+                const codes = await detector.detect(els.video);
+                return codes.length ? codes[0].rawValue : null;
+              },
+            };
+          }
+        } catch (e) { /* fall through to jsQR */ }
+      }
+      const ctx = els.grab.getContext('2d', { willReadFrequently: true });
+      return {
+        name: 'jsQR',
+        detect() {
+          const scale = Math.min(1, 800 / els.video.videoWidth);
+          els.grab.width = Math.round(els.video.videoWidth * scale);
+          els.grab.height = Math.round(els.video.videoHeight * scale);
+          ctx.drawImage(els.video, 0, 0, els.grab.width, els.grab.height);
+          const img = ctx.getImageData(0, 0, els.grab.width, els.grab.height);
+          const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+          return code ? code.data : null;
+        },
+      };
+    }
+
+    async function start() {
+      els.error.textContent = '';
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        });
+      } catch (e) {
+        els.error.textContent =
+          'Camera unavailable: ' + e.message +
+          ' -> note: the page must be served over https:// or from localhost.';
+        return;
+      }
+      els.start.hidden = true;
+      els.video.hidden = false;
+      els.video.srcObject = stream;
+      await els.video.play();
+      requestWakeLock();
+
+      const detector = await makeDetector();
+      stats.detector = detector.name;
+      let busy = false;
+
+      async function loop(now) {
+        if (!busy && els.video.readyState >= 2) {
+          busy = true;
+          stats.attempts++;
+          stats.windowAttempts++;
+          if (now - stats.windowStart >= 1000) {
+            stats.rate = Math.round(stats.windowAttempts * 1000 / (now - stats.windowStart));
+            stats.windowStart = now;
+            stats.windowAttempts = 0;
+          }
+          try {
+            const value = await detector.detect();
+            if (value !== null) onDecoded(value);
+          } catch (e) { /* transient decode errors are expected */ }
+          els.stats.textContent =
+            `${detector.name} · ${stats.rate} scans/s · ${stats.hits} decodes · ${stats.bad} foreign`;
+          busy = false;
+        }
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    }
+    els.start.addEventListener('click', start);
+
+    // Keep the screen awake during a transfer. The lock drops when the page is
+    // hidden (lock screen, app switch), so re-acquire when it becomes visible.
+    let wakeLock = null;
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        updateOfflineBadge();
+      } catch (e) { /* denied, or document not visible */ }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (wakeLock && document.visibilityState === 'visible') requestWakeLock();
+    });
+
+    // Register the service worker, then confirm the receiver is actually cached
+    // before telling the presenter it's safe to disconnect.
+    async function initOffline() {
+      if (!('serviceWorker' in navigator)) return;
+      try {
+        await navigator.serviceWorker.register('../worker.js');
+        await navigator.serviceWorker.ready;
+        const cached = await caches.match('receiver.html');
+        if (cached) updateOfflineBadge(true);
+      } catch (e) { /* insecure origin or unsupported -> page still works online */ }
+    }
+
+    function updateOfflineBadge(cached) {
+      if (cached === true) updateOfflineBadge.cached = true;
+      const parts = [];
+      if (updateOfflineBadge.cached) parts.push('⚡ offline-ready');
+      if (wakeLock) parts.push('screen kept awake');
+      els.offline.textContent = parts.join(' · ');
+    }
+    initOffline();
+
+    // QR of this page's own URL, so the audience join spreads phone to phone.
+    function renderShareQr() {
+      const qr = qrcode(0, 'M');
+      qr.addData(location.href.split('#')[0]);
+      qr.make();
+      const canvas = document.getElementById('shareQr');
+      const modules = qr.getModuleCount();
+      const cell = Math.max(2, Math.floor(300 / modules));
+      canvas.width = canvas.height = modules * cell;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000';
+      for (let r = 0; r < modules; r++) {
+        for (let c = 0; c < modules; c++) {
+          if (qr.isDark(r, c)) ctx.fillRect(c * cell, r * cell, cell, cell);
+        }
+      }
+    }
+    renderShareQr();
+
+    // Console/test hook: inject a decoded frame string without a camera.
+    window.receiverApi = { injectFrame: onDecoded, getSession: () => session, resetSession };
+  </script>
+</body>
+
+</html>
